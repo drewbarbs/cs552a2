@@ -20,3 +20,7 @@ Thread Pool:
 -Go through and add error checking to calloc's 
 -Add thread_pool_destroy
 
+Client:
+	- "Main menu" should have button to create new connection
+	- connection window should log messages sent to the server/ those received
+
