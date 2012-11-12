@@ -1,2 +1,22 @@
--Have to add cleanup handler to kill ephemeral threads.
+Server:
+	- Modify servConn so that instead of having a -single- buffer, it
+	calloc's an array of buffers (one for each thread that will be
+	accepting client connections). Then each "accept" is dispatched
+	to a thread (as opposed to fork'ing a child as is done currently).
+	
+	- Threads communicating with clients will parse their requests,
+      and pass them along to threads in a threadpool shared amongst
+	  all the threads that talk to clients (protected by
+      worker_pool_mutex). 
+
+	  - define a function to parse client commands
+	  - define the functions start_movie, stop_movie, and seek_movie
+
+
+General:
+-add destroy routines!
+
+Thread Pool:
 -Go through and add error checking to calloc's 
+-Add thread_pool_destroy
+

@@ -1,17 +1,20 @@
+#include "ring_buffer.h"
 #include "thread_pool.h"
 #include <stdbool.h>
 #include <time.h>
 #include <assert.h>
 #include <stdio.h>
 #include <sched.h>
-#include "ring_buffer.h"
+#include <unistd.h>
 #include "errors.h"
 
 #define EPHEMERAL_IDLE_TIME 10 // in sec
+#define MAX_NUM_THREADS 100
 
 void cleanup_ephemeral(void *thread_info)
 {
-  thread_info_t *self = (thread_info_t*) thread_info;  
+  thread_info_t *self = (thread_info_t*) thread_info;
+  self->tp_data->num_tempthreads--;
   free(self);
 }
 
@@ -28,7 +31,8 @@ void *thread_func(void *thread_info)
   void *arg;
 
   pthread_detach(pthread_self());
-
+  pthread_cleanup_push(cleanup_ephemeral, thread_info);
+  
   while(1) {
 	if (!holding_mutex) {
 	  status = pthread_mutex_lock(task_mutex_ptr);
@@ -52,7 +56,7 @@ void *thread_func(void *thread_info)
 		break;
 	  }
 	} else {
-	  DPRINTF(("waiting on condition"));
+	  DPRINTF(("Waiting on work\n"));
 	  status = pthread_cond_wait(task_cond_ptr, task_mutex_ptr);
 	}
 	if (status != 0)
@@ -60,38 +64,83 @@ void *thread_func(void *thread_info)
 	holding_mutex = true;
 	self->tp_data->num_waiting--;	
 
-	// TODO: replace with a ring buffer for tasks
-	task = ring_buffer_remove(self->tp_data->task_buffer);
-	if (task == NULL) {
-	  DPRINTF(("Found null task\n"));
+	if (self->tp_data->num_outstanding == 0) {
+	  DPRINTF(("Thread complaining about having been woken up for no reason.\n"));
 	  continue;
 	}
-
+	task = ring_buffer_remove(self->tp_data->task_buffer);
+	assert(task != NULL);
+	
 	task_func = task->func;
 	arg = task->arg;
 	free(task);
+	self->tp_data->num_outstanding--;
+	/* if (self->tp_data->num_outstanding > 0) */
+	/*   pthread_cond_signal(task_cond_ptr); */
 
 	status = pthread_mutex_unlock(task_mutex_ptr);
+	holding_mutex = false;
+
 	if (status != 0)
 	  err_abort(status, "Unlock mutex before executing task");
 	task_func(arg);
-	
 	task_func = arg = NULL;
-	holding_mutex = false;
+
   }
 
   DPRINTF(("Exiting\n"));
+  if (self->ephemeral) {
+	pthread_cleanup_pop(1);
+  }
   return NULL;
 }
 
 void thread_pool_execute(thread_pool_t *tp, void (*func)(void *), void *arg)
 {
+  thread_info_t *thread_info;
+  int status = -1;
+  int num_jobs_in_system;
   DPRINTF(("Scheduling task\n"));
-  pthread_mutex_lock(&tp->shared.available_task_mutex);
   task_t *task = calloc(1, sizeof(task_t));
   task->func = func;
   task->arg = arg;
-  tp->shared.task = task;
+  while (status != 0) {
+	pthread_mutex_lock(&tp->shared.available_task_mutex);
+	status = ring_buffer_add(tp->shared.task_buffer, task);
+	if (status == 0)
+	  break;
+	DPRINTF(("Waiting for free space on buffer"));
+	pthread_mutex_unlock(&tp->shared.available_task_mutex);
+  }
+  tp->shared.num_outstanding++;
+  num_jobs_in_system = tp->shared.num_outstanding + tp->shared.num_permathreads
+	+ tp->shared.num_tempthreads - tp->shared.num_waiting;
+  /*BELOW: I need to check if the number of outstanding 
+	jobs is greater than the number of permanent threads +
+	the number of ephemeral threads. Problem I was running into
+	before was that while all permathreads had been signaled,
+	they had not yet had the chance to wake up and decrement
+	num_waiting, so it seemed as though they were available when
+	in fact, they were not 
+  */
+  if (num_jobs_in_system > (tp->shared.num_permathreads + tp->shared.num_tempthreads)) {
+	DPRINTF(("Creating new temp thread, as there are currently %d tasks "
+			 "in system and %d total threads\n", 
+			 num_jobs_in_system,
+			 (tp->shared.num_permathreads + tp->shared.num_tempthreads)));
+	assert(tp->shared.num_waiting <= tp->shared.num_outstanding);
+	thread_info = calloc(1, sizeof(thread_info_t));
+	thread_info->tp_data = &tp->shared;
+	thread_info->ephemeral = true;
+  	pthread_create(&thread_info->tid,
+  				   NULL, thread_func, thread_info);
+	tp->shared.num_tempthreads++;
+  }
+  while (tp->shared.num_waiting < tp->shared.num_outstanding) { // <= ?
+	  pthread_mutex_unlock(&tp->shared.available_task_mutex);
+	  sched_yield();
+	  pthread_mutex_lock(&tp->shared.available_task_mutex);
+   }
   pthread_cond_signal(&tp->shared.task_available);
   DPRINTF(("Unlocking available task mutex: %d threads reportedly waiting\n", tp->shared.num_waiting));
   pthread_mutex_unlock(&tp->shared.available_task_mutex);
@@ -107,9 +156,10 @@ thread_pool_t *thread_pool_create(int size)
    //TODO: add checks that calloc succeeded
   tp = calloc(1, sizeof(thread_pool_t));
   tp->permathreads = calloc(size, sizeof(thread_info_t));
-  tp->task_buffer = ring_buffer_create(size);
-  tp->num_permathreads = size;
-  tp->shared.num_waiting = 0;
+  //TODO add check that ring buffer create succeeded
+  tp->shared.task_buffer = ring_buffer_create(MAX_NUM_THREADS);
+  tp->shared.num_permathreads = size;
+  tp->shared.num_tempthreads = tp->shared.num_waiting = tp->shared.num_outstanding = 0;
 
   pthread_mutexattr_init(&mutex_attr);
   pthread_mutexattr_settype(&mutex_attr, PTHREAD_MUTEX_ERRORCHECK);
@@ -120,7 +170,7 @@ thread_pool_t *thread_pool_create(int size)
 
   for (i = 0; i < size; i++) {
   	thread_info = tp->permathreads + i;
-  	thread_info->ephemeral = true;
+  	thread_info->ephemeral = false;
 	thread_info->tp_data = &tp->shared;
   	pthread_create(&thread_info->tid,
   				   NULL, thread_func, thread_info);
@@ -140,12 +190,23 @@ void print_str(void *arg)
 }
 
 int main(int argc, char *argv[]) {
-  thread_pool_t *tp = thread_pool_create(10);
+  thread_pool_t *tp = thread_pool_create(8);
   thread_pool_execute(tp, print_str, 1);
   thread_pool_execute(tp, print_str, 2);
   thread_pool_execute(tp, print_str, 3);
   thread_pool_execute(tp, print_str, 4);
-  pthread_exit(0);
+  thread_pool_execute(tp, print_str, 5);
+  thread_pool_execute(tp, print_str, 6);
+  thread_pool_execute(tp, print_str, 7);
+  thread_pool_execute(tp, print_str, 8);
+  thread_pool_execute(tp, print_str, 9);
+  thread_pool_execute(tp, print_str, 10);
+  thread_pool_execute(tp, print_str, 11);
+  thread_pool_execute(tp, print_str, 12);
+  thread_pool_execute(tp, print_str, 13);
+  thread_pool_execute(tp, print_str, 14);
+  thread_pool_execute(tp, print_str, 15);
+  sleep(10);
   return 0;
 }
 

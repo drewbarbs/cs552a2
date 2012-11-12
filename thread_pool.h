@@ -1,5 +1,6 @@
 #ifndef __THREAD_POOL_H
 #define __THREAD_POOL_H
+#include "ring_buffer.h"
 #include <stdbool.h>
 #include <pthread.h>
 
@@ -8,14 +9,15 @@ typedef struct task_t {
   void *arg;
 } task_t;
 
-
 typedef struct tp_data_t {
   // Global info
-  pthread_cond_t  task_available;
+  pthread_cond_t task_available;
   pthread_mutex_t available_task_mutex;
   int num_waiting;
+  int num_outstanding;
+  int num_permathreads;
+  int num_tempthreads;
   ringbuff_t *task_buffer;
-  task_t *task;
 } tp_data_t;
 
 typedef struct thread_info_t {
@@ -26,7 +28,6 @@ typedef struct thread_info_t {
 
 typedef struct thread_pool_t {
   thread_info_t *permathreads;
-  int num_permathreads;
     // may want to add functionality to immediately keep track of 
   // ephemeral threads to be able to immediately kill them off
   tp_data_t shared;
