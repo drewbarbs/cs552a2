@@ -1,0 +1,2 @@
+-Have to add cleanup handler to kill ephemeral threads.
+-Go through and add error checking to calloc's 
