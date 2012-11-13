@@ -10,6 +10,9 @@ Server:
       worker_pool_mutex). 
 
 	  - define a function to parse client commands
+	  - upon receiving a command, malloc a new struct to hold a pointer to the command
+	  string, the socket descriptor, a program-wide unique request number, and a pointer to the return string/file
+	  - Dispatcher will sort ring buffer first by priority number, then by  
 	  - define the functions start_movie, stop_movie, and seek_movie
 
 
@@ -21,6 +24,11 @@ Thread Pool:
 -Add thread_pool_destroy
 
 Client:
-	- "Main menu" should have button to create new connection
+	- "Main menu" should have button to create new connection,
+	table/list of open connections
+	-connection pane could have a table of messages going back and forth?
+	- each connection pane should have associated with it a
+	SwingWorker that maintains the connection from client to server
+	(works with the socket)
 	- connection window should log messages sent to the server/ those received
 
