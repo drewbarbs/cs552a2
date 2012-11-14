@@ -2,7 +2,7 @@
 #ifndef __RING_BUFFER_H
 #define __RING_BUFFER_H
 
-#define RING_BUFFER_FULL 1
+#define BUFFER_FULL 1
 
 typedef struct ringbuff_t {
   void **buff;

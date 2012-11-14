@@ -20,8 +20,8 @@ ringbuff_t *ring_buffer_create(int size)
 }
 
 /* 
-   Adds the object pointed to by void *item,
-   returns 0 on success, RING_BUFFER_FULL on
+   Adds the pointer to the ring buffer,
+   returns 0 on success, BUFFER_FULL on
    error
 */
 int ring_buffer_add(ringbuff_t *rb, void *item)
@@ -29,7 +29,7 @@ int ring_buffer_add(ringbuff_t *rb, void *item)
   int next_slot = 0;
   
   if (rb->num_items == rb->buff_size)
-	return RING_BUFFER_FULL;
+	return BUFFER_FULL;
   
   next_slot = (rb->buff_start + rb->num_items) % rb->buff_size;
   rb->buff[next_slot] = item;

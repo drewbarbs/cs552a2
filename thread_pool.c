@@ -1,16 +1,21 @@
-#include "ring_buffer.h"
-#include "thread_pool.h"
-#include <stdbool.h>
-#include <time.h>
 #include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <sched.h>
+#include <time.h>
 #include <unistd.h>
 #include "errors.h"
+#include "ring_buffer.h"
+#include "thread_pool.h"
 
 #define EPHEMERAL_IDLE_TIME 10 // in sec
-#define MAX_NUM_THREADS 100
+#define MAX_NUM_EPHEMERAL 100
 
+/*
+  Cleanup routine called by an ephemeral thread
+  before exiting. Deallocates memory reserved
+  for its thread_info_t structure
+ */
 void cleanup_ephemeral(void *thread_info)
 {
   thread_info_t *self = (thread_info_t*) thread_info;
@@ -18,14 +23,24 @@ void cleanup_ephemeral(void *thread_info)
   free(self);
 }
 
+/*
+  Worker thread logic: repeatedly waits for new
+  tasks and executes them.
+ */
 void *thread_func(void *thread_info) 
 {
   thread_info_t *self = (thread_info_t*) thread_info;
+  /* Declare variables used to synchronize access to tasks */
   pthread_mutex_t *task_mutex_ptr = &self->tp_data->available_task_mutex;
   pthread_cond_t *task_cond_ptr = &self->tp_data->task_available;
-  struct timespec cond_time;
-  int status;
-  bool holding_mutex = false;
+  struct timespec cond_time; /* Used by ephemeral threads to do timed waits on
+								tasks */
+  bool holding_mutex = false; 
+
+
+  int status; // Used to check return values of PThread funcs for errors
+
+  /* Declare variables used to represent tasks */
   task_t *task;
   void (*task_func) (void *);
   void *arg;
@@ -39,13 +54,11 @@ void *thread_func(void *thread_info)
 	  if (status != 0)
 		err_abort(status, "Lock mutex");
 	}
-	
 	self->tp_data->num_waiting++;
-	status = 0;
 	if (self->ephemeral) {
 	  cond_time.tv_sec = time(NULL) + EPHEMERAL_IDLE_TIME;
 	  cond_time.tv_nsec = 0;
-	  DPRINTF(("About to timed wait\n"));
+	  DPRINTF(("Ephemeral thread about to timed wait on work.\n"));
 	  status = pthread_cond_timedwait(
 						  task_cond_ptr, task_mutex_ptr, &cond_time);
 	  if (status == ETIMEDOUT) {
@@ -56,7 +69,7 @@ void *thread_func(void *thread_info)
 		break;
 	  }
 	} else {
-	  DPRINTF(("Waiting on work\n"));
+	  DPRINTF(("Permanent thread about to wait on work.\n"));
 	  status = pthread_cond_wait(task_cond_ptr, task_mutex_ptr);
 	}
 	if (status != 0)
@@ -75,8 +88,6 @@ void *thread_func(void *thread_info)
 	arg = task->arg;
 	free(task);
 	self->tp_data->num_outstanding--;
-	/* if (self->tp_data->num_outstanding > 0) */
-	/*   pthread_cond_signal(task_cond_ptr); */
 
 	status = pthread_mutex_unlock(task_mutex_ptr);
 	holding_mutex = false;
@@ -88,7 +99,7 @@ void *thread_func(void *thread_info)
 
   }
 
-  DPRINTF(("Exiting\n"));
+  DPRINTF(("Worker thread exiting\n"));
   if (self->ephemeral) {
 	pthread_cleanup_pop(1);
   }
@@ -98,30 +109,34 @@ void *thread_func(void *thread_info)
 void thread_pool_execute(thread_pool_t *tp, void (*func)(void *), void *arg)
 {
   thread_info_t *thread_info;
-  int status = -1;
-  int num_jobs_in_system;
-  DPRINTF(("Scheduling task\n"));
+  int status, num_jobs_in_system;
   task_t *task = calloc(1, sizeof(task_t));
+  DPRINTF(("About to place new task on buffer\n"));
   task->func = func;
   task->arg = arg;
-  while (status != 0) {
+  
+  /* 
+	 First need to add new task to the task buffer.
+	 In the case that the buffer is full, I unlock the
+	 mutex to allow worker threads to make progress,
+	 and try again later 
+  */
+  do {
 	pthread_mutex_lock(&tp->shared.available_task_mutex);
 	status = ring_buffer_add(tp->shared.task_buffer, task);
-	if (status == 0)
-	  break;
-	DPRINTF(("Waiting for free space on buffer"));
-	pthread_mutex_unlock(&tp->shared.available_task_mutex);
-  }
+	if (status != 0) {
+	  DPRINTF(("Waiting for free space on buffer"));
+	  pthread_mutex_unlock(&tp->shared.available_task_mutex);
+	}
+  } while (status != 0);
   tp->shared.num_outstanding++;
   num_jobs_in_system = tp->shared.num_outstanding + tp->shared.num_permathreads
 	+ tp->shared.num_tempthreads - tp->shared.num_waiting;
-  /*BELOW: I need to check if the number of outstanding 
-	jobs is greater than the number of permanent threads +
-	the number of ephemeral threads. Problem I was running into
-	before was that while all permathreads had been signaled,
-	they had not yet had the chance to wake up and decrement
-	num_waiting, so it seemed as though they were available when
-	in fact, they were not 
+
+  /* I need to check if the number of uncompleted jobs in thread pool 
+	(including newly submitted task) is greater than the # of permanent threads +
+	# of ephemeral threads. If so, I will need to create an additional
+	ephemeral thread to handle this task.
   */
   if (num_jobs_in_system > (tp->shared.num_permathreads + tp->shared.num_tempthreads)) {
 	DPRINTF(("Creating new temp thread, as there are currently %d tasks "
@@ -136,14 +151,20 @@ void thread_pool_execute(thread_pool_t *tp, void (*func)(void *), void *arg)
   				   NULL, thread_func, thread_info);
 	tp->shared.num_tempthreads++;
   }
+  
+  /*
+	Finally, before announcing the availability of a new task,
+	I need to ensure a thread will be waiting on the signal 
+	(to avoid the "lost signal" problem)
+   */
   while (tp->shared.num_waiting < tp->shared.num_outstanding) { // <= ?
 	  pthread_mutex_unlock(&tp->shared.available_task_mutex);
 	  sched_yield();
 	  pthread_mutex_lock(&tp->shared.available_task_mutex);
    }
   pthread_cond_signal(&tp->shared.task_available);
-  DPRINTF(("Unlocking available task mutex: %d threads reportedly waiting\n", tp->shared.num_waiting));
   pthread_mutex_unlock(&tp->shared.available_task_mutex);
+  DPRINTF(("Unlocked available task mutex: %d threads reportedly waiting\n", tp->shared.num_waiting));
 }
 
 
@@ -157,7 +178,7 @@ thread_pool_t *thread_pool_create(int size)
   tp = calloc(1, sizeof(thread_pool_t));
   tp->permathreads = calloc(size, sizeof(thread_info_t));
   //TODO add check that ring buffer create succeeded
-  tp->shared.task_buffer = ring_buffer_create(MAX_NUM_THREADS);
+  tp->shared.task_buffer = ring_buffer_create(size + MAX_NUM_EPHEMERAL);
   tp->shared.num_permathreads = size;
   tp->shared.num_tempthreads = tp->shared.num_waiting = tp->shared.num_outstanding = 0;
 
