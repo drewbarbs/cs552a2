@@ -21,7 +21,8 @@ typedef struct tp_data_t {
 } tp_data_t;
 
 typedef struct thread_info_t {
-  pthread_t tid;
+  pthread_t pt_tid; // PThreads thread identifier
+  int tid; // An int thread identifier used to label messages
   bool ephemeral; // Indicates this worker_thread is temporary
   tp_data_t * tp_data;  
 } thread_info_t;

@@ -147,7 +147,8 @@ void thread_pool_execute(thread_pool_t *tp, void (*func)(void *), void *arg)
 	thread_info = calloc(1, sizeof(thread_info_t));
 	thread_info->tp_data = &tp->shared;
 	thread_info->ephemeral = true;
-  	pthread_create(&thread_info->tid,
+	thread_info->tid = tp->shared.num_permathreads + tp->shared.num_tempthreads + 1;
+  	pthread_create(&thread_info->pt_tid,
   				   NULL, thread_func, thread_info);
 	tp->shared.num_tempthreads++;
   }
@@ -164,7 +165,9 @@ void thread_pool_execute(thread_pool_t *tp, void (*func)(void *), void *arg)
    }
   pthread_cond_signal(&tp->shared.task_available);
   pthread_mutex_unlock(&tp->shared.available_task_mutex);
-  DPRINTF(("Unlocked available task mutex: %d threads reportedly waiting\n", tp->shared.num_waiting));
+  DPRINTF(("Unlocked available task mutex: " 
+		   "%d threads reportedly waiting\n", 
+		   tp->shared.num_waiting));
 }
 
 
@@ -193,7 +196,8 @@ thread_pool_t *thread_pool_create(int size)
   	thread_info = tp->permathreads + i;
   	thread_info->ephemeral = false;
 	thread_info->tp_data = &tp->shared;
-  	pthread_create(&thread_info->tid,
+	thread_info->tid = i + 1;
+  	pthread_create(&thread_info->pt_tid,
   				   NULL, thread_func, thread_info);
   }
   while (tp->shared.num_waiting < size) {
@@ -207,11 +211,11 @@ thread_pool_t *thread_pool_create(int size)
 void print_str(void *arg)
 {
   int num = (int) arg;
-  printf("Thread here, printing! %d\n", num);
+  printf("Thread here, printing! %d\n", arg);
 }
 
 int main(int argc, char *argv[]) {
-  thread_pool_t *tp = thread_pool_create(8);
+  thread_pool_t *tp = thread_pool_create(1);
   thread_pool_execute(tp, print_str, 1);
   thread_pool_execute(tp, print_str, 2);
   thread_pool_execute(tp, print_str, 3);
