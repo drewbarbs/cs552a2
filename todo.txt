@@ -1,9 +1,4 @@
-Server:
-	- Modify servConn so that instead of having a -single- buffer, it
-	calloc's an array of buffers (one for each thread that will be
-	accepting client connections). Then each "accept" is dispatched
-	to a thread (as opposed to fork'ing a child as is done currently).
-	
+Server:	
 	- Threads communicating with clients will parse their requests,
       and pass them along to threads in a threadpool shared amongst
 	  all the threads that talk to clients (protected by
@@ -14,12 +9,17 @@ Server:
 	  string, the socket descriptor, a program-wide unique request number, and a pointer to the return string/file
 	  - Dispatcher will sort ring buffer first by priority number, then by  
 	  - define the functions start_movie, stop_movie, and seek_movie
-
+	  - Currently, the size of the buffer allocated for hostnames is a
+fixed magic number "1025", might want to change
 
 General:
 -add destroy routines!
+-my method of request parsing does not allow filenames with colons in
+them, does not allow whitespace btw colons
+- request parsing segfaults on incorrect input (atoi)
 
 Thread Pool:
+- is thread_pool_execute truly thread safe?
 -Go through and add error checking to calloc's 
 -Add thread_pool_destroy
 
@@ -30,5 +30,8 @@ Client:
 	- each connection pane should have associated with it a
 	SwingWorker that maintains the connection from client to server
 	(works with the socket)
-	- connection window should log messages sent to the server/ those received
+	- connection window should log messages sent to the server/ those
+	received
+
+
 

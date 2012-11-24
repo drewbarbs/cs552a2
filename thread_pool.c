@@ -99,7 +99,7 @@ void *thread_func(void *thread_info)
 
   }
 
-  DPRINTF(("Worker thread exiting\n"));
+  DPRINTF(("Worker thread %d exiting\n", self->tid));
   if (self->ephemeral) {
 	pthread_cleanup_pop(1);
   }
@@ -208,31 +208,31 @@ thread_pool_t *thread_pool_create(int size)
   return tp;
 }
 
-void print_str(void *arg)
-{
-  int num = (int) arg;
-  printf("Thread here, printing! %d\n", arg);
-}
+/* void print_str(void *arg) */
+/* { */
+/*   int num = (int) arg; */
+/*   printf("Thread here, printing! %d\n", arg); */
+/* } */
 
-int main(int argc, char *argv[]) {
-  thread_pool_t *tp = thread_pool_create(1);
-  thread_pool_execute(tp, print_str, 1);
-  thread_pool_execute(tp, print_str, 2);
-  thread_pool_execute(tp, print_str, 3);
-  thread_pool_execute(tp, print_str, 4);
-  thread_pool_execute(tp, print_str, 5);
-  thread_pool_execute(tp, print_str, 6);
-  thread_pool_execute(tp, print_str, 7);
-  thread_pool_execute(tp, print_str, 8);
-  thread_pool_execute(tp, print_str, 9);
-  thread_pool_execute(tp, print_str, 10);
-  thread_pool_execute(tp, print_str, 11);
-  thread_pool_execute(tp, print_str, 12);
-  thread_pool_execute(tp, print_str, 13);
-  thread_pool_execute(tp, print_str, 14);
-  thread_pool_execute(tp, print_str, 15);
-  sleep(10);
-  return 0;
-}
+/* int main(int argc, char *argv[]) { */
+/*   thread_pool_t *tp = thread_pool_create(1); */
+/*   thread_pool_execute(tp, print_str, 1); */
+/*   thread_pool_execute(tp, print_str, 2); */
+/*   thread_pool_execute(tp, print_str, 3); */
+/*   thread_pool_execute(tp, print_str, 4); */
+/*   thread_pool_execute(tp, print_str, 5); */
+/*   thread_pool_execute(tp, print_str, 6); */
+/*   thread_pool_execute(tp, print_str, 7); */
+/*   thread_pool_execute(tp, print_str, 8); */
+/*   thread_pool_execute(tp, print_str, 9); */
+/*   thread_pool_execute(tp, print_str, 10); */
+/*   thread_pool_execute(tp, print_str, 11); */
+/*   thread_pool_execute(tp, print_str, 12); */
+/*   thread_pool_execute(tp, print_str, 13); */
+/*   thread_pool_execute(tp, print_str, 14); */
+/*   thread_pool_execute(tp, print_str, 15); */
+/*   sleep(10); */
+/*   return 0; */
+/* } */
 
 
