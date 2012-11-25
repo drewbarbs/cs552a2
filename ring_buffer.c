@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdbool.h>
 #include "errors.h"
 #include "ring_buffer.h"
 
@@ -57,4 +58,9 @@ void *ring_buffer_remove(ringbuff_t *rb)
 int ring_buffer_numitems(ringbuff_t *rb)
 {
   return rb->num_items;
+}
+
+bool ring_buffer_full(ringbuff_t *rb)
+{
+  return rb->num_items == rb->buff_size;
 }

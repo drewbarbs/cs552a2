@@ -11,6 +11,19 @@
 #define EPHEMERAL_IDLE_TIME 10 // in sec
 #define MAX_NUM_EPHEMERAL 100
 
+
+/* Helper Functions */
+static void cleanup_ephemeral(void *thread_info);
+static void *thread_func(void *thread_info);
+
+
+
+int thread_pool_getid(thread_pool_t *tp)
+{
+  void *id = pthread_getspecific(tp->shared.id_key);
+  return  *((int *) (&id));
+}
+
 /*
   Cleanup routine called by an ephemeral thread
   before exiting. Deallocates memory reserved
@@ -36,7 +49,7 @@ void *thread_func(void *thread_info)
   struct timespec cond_time; /* Used by ephemeral threads to do timed waits on
 								tasks */
   bool holding_mutex = false; 
-
+  
 
   int status; // Used to check return values of PThread funcs for errors
 
@@ -47,6 +60,7 @@ void *thread_func(void *thread_info)
 
   pthread_detach(pthread_self());
   pthread_cleanup_push(cleanup_ephemeral, thread_info);
+  pthread_setspecific(self->tp_data->id_key, *((void **) (&self->tid)));
   
   while(1) {
 	if (!holding_mutex) {
@@ -170,7 +184,6 @@ void thread_pool_execute(thread_pool_t *tp, void (*func)(void *), void *arg)
 		   tp->shared.num_waiting));
 }
 
-
 thread_pool_t *thread_pool_create(int size) 
 {
   thread_pool_t *tp;
@@ -192,6 +205,8 @@ thread_pool_t *thread_pool_create(int size)
 
   pthread_cond_init(&tp->shared.task_available, NULL);
 
+  pthread_key_create(&tp->shared.id_key, NULL);
+
   for (i = 0; i < size; i++) {
   	thread_info = tp->permathreads + i;
   	thread_info->ephemeral = false;
@@ -208,31 +223,38 @@ thread_pool_t *thread_pool_create(int size)
   return tp;
 }
 
+
+void thread_pool_destroy(thread_pool_t *tp) {
+  // Need to make sure all threads are destroyed before
+  //  deleting id_key, deleting mutexes, deleting cond variable,
+  // and finally deallocating tp->shared
+
+}
+
 /* void print_str(void *arg) */
 /* { */
-/*   int num = (int) arg; */
-/*   printf("Thread here, printing! %d\n", arg); */
+/*   int num = thread_pool_getid((thread_pool_t *) arg); */
+/*   printf("Thread here, printing! %d\n", num); */
 /* } */
 
 /* int main(int argc, char *argv[]) { */
 /*   thread_pool_t *tp = thread_pool_create(1); */
-/*   thread_pool_execute(tp, print_str, 1); */
-/*   thread_pool_execute(tp, print_str, 2); */
-/*   thread_pool_execute(tp, print_str, 3); */
-/*   thread_pool_execute(tp, print_str, 4); */
-/*   thread_pool_execute(tp, print_str, 5); */
-/*   thread_pool_execute(tp, print_str, 6); */
-/*   thread_pool_execute(tp, print_str, 7); */
-/*   thread_pool_execute(tp, print_str, 8); */
-/*   thread_pool_execute(tp, print_str, 9); */
-/*   thread_pool_execute(tp, print_str, 10); */
-/*   thread_pool_execute(tp, print_str, 11); */
-/*   thread_pool_execute(tp, print_str, 12); */
-/*   thread_pool_execute(tp, print_str, 13); */
-/*   thread_pool_execute(tp, print_str, 14); */
-/*   thread_pool_execute(tp, print_str, 15); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
+/*   thread_pool_execute(tp, print_str, tp); */
 /*   sleep(10); */
+/*   pthread_exit(0); */
 /*   return 0; */
 /* } */
-
-

@@ -32,21 +32,39 @@ static pthread_mutex_t worker_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 static thread_pool_t *tp;
 static ringbuff_t *message_buffer;
 
-void handle_client(void *cli_structp) 
+/* Helper functions */
+static void destroy_cli(cli_t *cli);
+static void client_listen(void *cli_structp) ;
+
+void destroy_cli(cli_t *cli) 
+{
+  close(cli->sd);
+  if (cli->hostname != NULL) {
+	free(cli->hostname);
+  }
+  free(cli);
+}
+
+void client_listen(void *cli_structp) 
 {
   cli_t *cli = (cli_t *) cli_structp;
   cli_req_t req;
   int sd = cli->sd;
   char recvbuf[RECV_BUF_SIZE];
-  char *request_str = NULL;
+  char *req_str_to_tokenize = NULL, *original_req_str = NULL;
   int num_read;
   memset(&recvbuf, 0, RECV_BUF_SIZE);
   
+  /* It will be the worker's responsibility to free
+	 his worker_data */
   worker_data_t *worker_data = calloc(1, sizeof(worker_data_t));
   pthread_mutex_t *mutex = malloc(sizeof(pthread_mutex_t));
   pthread_mutex_init(mutex, NULL);
+  worker_data->cli = cli;
   worker_data->mutex = mutex;
   worker_data->msg_buf = message_buffer;
+  worker_data->tp = tp; /* Worker thread needs this to find out its
+						   thread id */
   worker_data->cancelled = false;
   
   if (cli->hostname != NULL) {
@@ -58,50 +76,56 @@ void handle_client(void *cli_structp)
 	if (num_read > 0) {
 	  /* Need to copy client request so that it can be
 		 printed later (for debug purposes) */
-	  free(request_str);
-	  request_str = calloc(num_read + 1, sizeof(char));
-	  strncpy(request_str, recvbuf, num_read);
+	  req_str_to_tokenize = calloc(num_read + 1, sizeof(char));
+	  original_req_str = calloc(num_read + 1, sizeof(char));
+	  strncpy(req_str_to_tokenize, recvbuf, num_read);
+	  strncpy(original_req_str, recvbuf, num_read);
 	  /* Parse client request */
-	  req = parse_request(recvbuf);
+	  req = parse_request(req_str_to_tokenize);
 	  switch (req.request) {
 	  case start_movie:
 		worker_data->req = req;
+		worker_data->original_req_str = original_req_str;
+		worker_data->tokenized_req_str = req_str_to_tokenize;
 		thread_pool_execute(tp, movie_worker, worker_data);
 		break;
 	  case seek_movie:
-		pthread_mutex_lock(&mutex);
+		pthread_mutex_lock(mutex);
 		worker_data->req = req;
-		pthread_mutex_unlock(&mutex);
+		worker_data->original_req_str = original_req_str;
+		worker_data->tokenized_req_str = req_str_to_tokenize;
+		pthread_mutex_unlock(mutex);
 		break;
 	  case stop_movie:
-		pthread_mutex_lock(&mutex);
-		worker_data->cancelled = true;
-		pthread_mutex_unlock(&mutex);
-		/* break; */
 	  case invalid:
 	  case close_conn:
+		pthread_mutex_lock(mutex);
+		worker_data->cancelled = true;
+		pthread_mutex_unlock(mutex);
 		goto close_connection;
 		// break;
 	  default:
-		err_abort(EINVAL, request_str);
+		err_abort(EINVAL, original_req_str);
 	  }
 	}
   }
  close_connection:
 
-  free(request_str);
-  if (cli->hostname != NULL) {
-	free(cli->hostname);
-  }
-  free(cli);
-  close(cli->sd);
+  /* Need to ensure that mutex is unlocked before
+	 trying to destroy it */
+  pthread_mutex_lock(mutex);
+  pthread_mutex_unlock(mutex);
+  pthread_mutex_destroy(mutex);
+  DPRINTF(("About to destroy client\n"));
+  destroy_cli(cli);
   DPRINTF(("Client listener exiting\n"));
 }
 
 void servConn (int port) 
 {
 
-  int sd, new_sd, cli_len;
+  int sd, new_sd;
+  unsigned int cli_len;
   struct sockaddr_in name, cli_name;
   cli_t *new_client;
   char *cli_hbuf;
@@ -157,17 +181,10 @@ void servConn (int port)
 	  new_client->hostname = cli_hbuf;
 	}
 
-	thread_pool_execute(tp, handle_client, (void *) new_client);
+	thread_pool_execute(tp, client_listen, (void *) new_client);
 	
 
   }
-}
-
-void destroy_cli(cli_t *cli) 
-{
-  free(cli->hostname);
-  free(cli->request_str);
-  free(cli);
 }
 
 int main () 
