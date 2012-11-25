@@ -25,16 +25,17 @@
 #define NUM_THREADS 5
 #define SERVER_PORT 5050
 #define RECV_BUF_SIZE 1024
-#define MSG_BUF_SIZE 100
 #define MAX_FNAME_LEN 100
 
 static pthread_mutex_t worker_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 static thread_pool_t *tp;
-static ringbuff_t *message_buffer;
+//static ringbuff_t *message_buffer;
+static rb_struct *msg_rb;
 
 /* Helper functions */
 static void destroy_cli(cli_t *cli);
 static void client_listen(void *cli_structp) ;
+static void dispatch_func(void *);
 
 void destroy_cli(cli_t *cli) 
 {
@@ -44,6 +45,22 @@ void destroy_cli(cli_t *cli)
   }
   free(cli);
 }
+
+void dispatch_func(void *arg) 
+{
+  rb_struct *msg_rb = (rb_struct *) arg;
+  buf_item *item = NULL;
+  
+  pthread_mutex_lock(msg_rb->mutex);
+  while (ring_buffer_getsize < M) {
+	pthread_cond_wait(msg_rb->has_greater_than_M, msg_rb->mutex);
+  }
+  while ((item = (buf_item *) ring_buffer_remove(rb)) != NULL) {
+	fwrite(item->data, 
+  }
+}
+
+
 
 void client_listen(void *cli_structp) 
 {
@@ -62,7 +79,7 @@ void client_listen(void *cli_structp)
   pthread_mutex_init(mutex, NULL);
   worker_data->cli = cli;
   worker_data->mutex = mutex;
-  worker_data->msg_buf = message_buffer;
+  worker_data->msg_rb = msg_rb;
   worker_data->tp = tp; /* Worker thread needs this to find out its
 						   thread id */
   worker_data->cancelled = false;
@@ -182,15 +199,13 @@ void servConn (int port)
 	}
 
 	thread_pool_execute(tp, client_listen, (void *) new_client);
-	
-
   }
 }
 
 int main () 
 {
   tp = thread_pool_create(NUM_THREADS);
-  message_buffer = ring_buffer_create(MSG_BUF_SIZE);
+  msg_rb = rb_struct_create();
   servConn (SERVER_PORT); /* Server port. */
 
   return 0;

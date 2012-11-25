@@ -19,4 +19,7 @@ int ring_buffer_add(ringbuff_t *, void *);
 void *ring_buffer_remove(ringbuff_t *);
 int ring_buffer_getsize(ringbuff_t *);
 bool ring_buffer_full(ringbuff_t *);
+void ring_buffer_sort(ringbuff_t *rb, int (*comp_func)(const void *a1, 
+													   const void *a2));
+
 #endif

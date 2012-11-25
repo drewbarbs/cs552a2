@@ -20,6 +20,11 @@ ringbuff_t *ring_buffer_create(int size)
   return rb;
 }
 
+//TODO: implement
+void ring_buffer_destroy(ringbuff_t *rb)
+{
+}
+
 /* 
    Adds the pointer to the ring buffer,
    returns 0 on success, BUFFER_FULL on
@@ -55,7 +60,7 @@ void *ring_buffer_remove(ringbuff_t *rb)
   return rb->buff[first_item];
 }
 
-int ring_buffer_numitems(ringbuff_t *rb)
+int ring_buffer_getsize(ringbuff_t *rb)
 {
   return rb->num_items;
 }
@@ -63,4 +68,28 @@ int ring_buffer_numitems(ringbuff_t *rb)
 bool ring_buffer_full(ringbuff_t *rb)
 {
   return rb->num_items == rb->buff_size;
+}
+
+/* Sorts the ring buffer according to a comparison function
+   comp_func, which is expected to take two arguments of type (void*)
+   (items in the ring buffer) and return 0 when the items being compared are
+   equal, a positive number when the first item is greater than the second,
+   and a negative number when the first item is less than the second */
+void ring_buffer_sort(ringbuff_t *rb, int (*comp_func)(const void *a1, 
+													   const void *a2))
+{
+  void *item, **temp_arr;
+  unsigned int i = 0, num_items = ring_buffer_getsize(rb);
+  if (ring_buffer_getsize(rb) == 0) {
+	return;
+  }
+  temp_arr = malloc(sizeof(void *) * num_items);
+  while ((item = ring_buffer_remove(rb)) != NULL) {
+	temp_arr[i++] = item;
+  }
+  qsort(temp_arr, num_items, sizeof(void *), comp_func);
+  for (i = 0; i < num_items; i++) {
+	ring_buffer_add(rb, temp_arr[i]);
+  }
+  free(temp_arr);
 }
