@@ -23,7 +23,7 @@
 						  (not yet accepted) may grow */
 
 #define NUM_THREADS 5
-#define SERVER_PORT 5050
+#define SERVER_PORT 5051
 #define RECV_BUF_SIZE 1024
 #define MAX_FNAME_LEN 100
 
@@ -46,21 +46,48 @@ void destroy_cli(cli_t *cli)
   free(cli);
 }
 
-void dispatch_func(void *arg) 
+int sort_func(const void *arg1, const void *arg2)
 {
-  rb_struct *msg_rb = (rb_struct *) arg;
-  buf_item *item = NULL;
-  
-  pthread_mutex_lock(msg_rb->mutex);
-  while (ring_buffer_getsize < M) {
-	pthread_cond_wait(msg_rb->has_greater_than_M, msg_rb->mutex);
-  }
-  while ((item = (buf_item *) ring_buffer_remove(rb)) != NULL) {
-	fwrite(item->data, 
+  buf_item *a1 = *((buf_item **) arg1);
+  buf_item *a2 = *((buf_item **) arg2);
+  if (a1->priority < a2->priority) {
+	return -1;
+  } else if (a1->priority == a2->priority) {
+	if (a1->msg_num < a2->msg_num)
+	  return -1;
+	else if (a1->msg_num == a2->msg_num)
+	  return 0;
+	else
+	  return 1;
+  } else {
+	return 1;
   }
 }
 
-
+void dispatch_func(void *arg) 
+{
+  //  rb_struct *msg_rb = (rb_struct *) arg;
+  buf_item *item = NULL;
+  bool buf_was_full;
+  while (1) {
+	pthread_mutex_lock(msg_rb->mutex);
+	while (ring_buffer_getsize(msg_rb->buf) < M) {
+	  pthread_cond_wait(msg_rb->has_greater_than_M, msg_rb->mutex);
+	}
+	buf_was_full = ring_buffer_full(msg_rb->buf);
+	ring_buffer_sort(msg_rb->buf, sort_func);
+	while ((item = (buf_item *) ring_buffer_remove(msg_rb->buf)) != NULL) {
+	  write(item->sd, item->data, item->data_len);
+	  DPRINTF(("Dispatcher Printing %s\n", item->data));
+	  free(item->data);
+	  free(item);
+	}
+	if (buf_was_full) {
+	  pthread_cond_signal(msg_rb->has_space);
+	}
+	pthread_mutex_unlock(msg_rb->mutex);
+  }
+}
 
 void client_listen(void *cli_structp) 
 {
@@ -133,7 +160,6 @@ void client_listen(void *cli_structp)
   pthread_mutex_lock(mutex);
   pthread_mutex_unlock(mutex);
   pthread_mutex_destroy(mutex);
-  DPRINTF(("About to destroy client\n"));
   destroy_cli(cli);
   DPRINTF(("Client listener exiting\n"));
 }
@@ -206,6 +232,7 @@ int main ()
 {
   tp = thread_pool_create(NUM_THREADS);
   msg_rb = rb_struct_create();
+  thread_pool_execute(tp, dispatch_func, NULL);
   servConn (SERVER_PORT); /* Server port. */
 
   return 0;

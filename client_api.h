@@ -15,9 +15,10 @@ typedef enum REQUEST { start_movie, stop_movie, seek_movie, close_conn, invalid 
 
 typedef struct buf_item {
   void *data;
-  int datalen;
+  size_t data_len;
   int sd;
   int priority;
+  int msg_num;
 } buf_item;
 
 typedef struct cli_t {
